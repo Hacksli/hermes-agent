@@ -1781,6 +1781,40 @@ def cmd_chat(args):
             accept_hooks=getattr(args, "accept_hooks", False),
         )
 
+    # Auto-detect youself.io gateway transport when YOUSELF_GATEWAY_TOKEN is set
+    # or when --transport youself_gateway is passed explicitly.
+    _requested_transport = getattr(args, "transport", None)
+    _youself_token = os.environ.get("YOUSELF_GATEWAY_TOKEN", "")
+    if _requested_transport == "youself_gateway" or (
+        not _requested_transport and _youself_token
+    ):
+        try:
+            from agent.transports.youself_gateway import (
+                YouSelfGatewayTransport,
+                load_youself_env,
+            )
+            import logging as _logging
+
+            load_youself_env()
+            _logging.basicConfig(
+                level=_logging.INFO,
+                format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            )
+            _ys_mode = os.environ.get("YOUSELF_MODE", "long_poll")
+
+            def _ys_handler(update):
+                return None  # stub — extend with real agent dispatch
+
+            _transport = YouSelfGatewayTransport(_ys_handler, mode=_ys_mode)
+            try:
+                _transport.run()
+            except KeyboardInterrupt:
+                pass
+            return
+        except Exception as _ys_err:
+            print(f"[youself] Failed to start gateway transport: {_ys_err}")
+            raise SystemExit(1)
+
     # Import and run the CLI
     from cli import main as cli_main
 
@@ -6137,6 +6171,38 @@ def cmd_cron(args):
     from hermes_cli.cron import cron_command
 
     cron_command(args)
+
+
+def cmd_youself(args):
+    """Run Hermes as a youself.io gateway transport (long-poll / WebSocket / SSE)."""
+    from agent.transports.youself_gateway import YouSelfGatewayTransport, load_youself_env
+    import logging
+
+    load_youself_env()
+
+    mode = getattr(args, "mode", None) or os.environ.get("YOUSELF_MODE", "long_poll")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    # Lazy-import the agent runtime so the transport can call it.
+    from cli import main as cli_main  # noqa: F401 — ensure runtime is importable
+
+    def _handle_update(update: dict):
+        """Minimal echo handler — replace with real agent dispatch."""
+        msg = update.get("message") or update
+        text = msg.get("text") or msg.get("content") or ""
+        if not text:
+            return None
+        # TODO: pipe *text* through the Hermes agent runtime and return reply
+        return f"[hermes] received: {text[:100]}"
+
+    transport = YouSelfGatewayTransport(_handle_update, mode=mode)
+    try:
+        transport.run()
+    except KeyboardInterrupt:
+        pass
 
 
 def cmd_webhook(args):
@@ -11979,6 +12045,26 @@ def main():
     )
 
     webhook_parser.set_defaults(func=cmd_webhook)
+
+    # =========================================================================
+    # youself command — youself.io gateway transport
+    # =========================================================================
+    youself_parser = subparsers.add_parser(
+        "youself",
+        help="Run Hermes connected to a youself.io VM gateway",
+        description=(
+            "Start Hermes as a youself.io gateway transport.  "
+            "Reads credentials from YOUSELF_GATEWAY_URL / YOUSELF_GATEWAY_TOKEN "
+            "environment variables (or /etc/openclaw/env on Alpine VMs)."
+        ),
+    )
+    youself_parser.add_argument(
+        "--mode",
+        choices=["long_poll", "websocket", "sse"],
+        default=None,
+        help="Transport mode (default: long_poll; switches to sse on 409)",
+    )
+    youself_parser.set_defaults(func=cmd_youself)
 
     # =========================================================================
     # portal command — Nous Portal status + Tool Gateway routing

@@ -378,4 +378,15 @@ def build_top_level_parser():
         help="With --tui: run TypeScript sources via tsx (skip dist build)",
     )
 
+    chat_parser.add_argument(
+        "--transport",
+        default=None,
+        metavar="TRANSPORT",
+        help=(
+            "Override the I/O transport adapter.  Use 'youself_gateway' to "
+            "connect to a youself.io VM gateway (auto-detected when "
+            "YOUSELF_GATEWAY_TOKEN is set in the environment)."
+        ),
+    )
+
     return parser, subparsers, chat_parser

@@ -173,6 +173,67 @@ See `hermes claw migrate --help` for all options, or use the `openclaw-migration
 
 ---
 
+## youself.io Integration
+
+Hermes ships a built-in transport adapter for the [youself.io](https://youself.io) AI-VM platform, allowing it to run as a persistent agent inside a youself.io virtual machine.
+
+### Quick start
+
+**1. Set environment variables** (or write them to `/etc/openclaw/env`):
+
+```sh
+export YOUSELF_GATEWAY_URL=https://gateway.youself.io
+export YOUSELF_GATEWAY_TOKEN=your-token-here
+
+# Optional LLM proxy (forwarded from the youself.io control plane)
+export LLM_PROXY_BASE_URL=https://api.youself.io/llm/v1
+export LLM_PROXY_API_KEY=your-llm-key
+```
+
+**2. Start the transport:**
+
+```sh
+# Auto-detected when YOUSELF_GATEWAY_TOKEN is present
+python3 -m hermes
+
+# Or explicit:
+python3 -m hermes --transport youself_gateway
+
+# Choose a specific polling mode:
+python3 -m hermes --transport youself_gateway  # long-poll (default)
+YOUSELF_MODE=sse   python3 -m hermes
+YOUSELF_MODE=websocket python3 -m hermes
+```
+
+### Transport modes
+
+| Mode | Description |
+|------|-------------|
+| `long_poll` | `GET /updates?offset=N&timeout=30` (default). Switches to SSE on HTTP 409. |
+| `websocket` | `ws://{host}/vm-connect?token={token}` via `websocket-client`. |
+| `sse` | `GET /stream` with `Accept: text/event-stream`. |
+
+### Alpine VM deployment (youself.io gold image)
+
+```sh
+# Install Hermes
+sh scripts/install-vm.sh
+
+# Enable and start the OpenRC service
+rc-update add hermes default
+rc-service hermes start
+
+# Logs
+tail -f /var/log/hermes/agent.log
+tail -f /var/log/hermes/agent.err
+```
+
+The OpenRC service (`etc/init.d/hermes`) reads `/etc/openclaw/env` on startup
+and exports `OPENAI_API_BASE` / `OPENAI_API_KEY` from the youself.io LLM proxy
+credentials automatically.
+
+---
+
 ## Contributing
 
 We welcome contributions! See the [Contributing Guide](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) for development setup, code style, and PR process.
