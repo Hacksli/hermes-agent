@@ -143,9 +143,10 @@ class YouSelfGatewayTransport:
 
         backoff = self._BACKOFF_BASE
         while self._running:
+            last_sid = getattr(self, "_last_stream_id", "0")
             url = (
                 f"{self.gateway_url}/updates"
-                f"?offset={self._offset}&timeout=30"
+                f"?offset={last_sid}&timeout=30"
             )
             req = urllib.request.Request(
                 url,
@@ -167,11 +168,15 @@ class YouSelfGatewayTransport:
                     else:
                         updates_list = updates
 
+                    last_stream_id = None
                     for update in updates_list:
                         self._handle_and_reply(update)
-                        uid = update.get("update_id") or update.get("id")
-                        if uid is not None:
-                            self._offset = int(uid) + 1
+                        # stream_id format: "1714390800123-0" — pass as-is for next offset
+                        sid = update.get("stream_id")
+                        if sid:
+                            last_stream_id = sid
+                    if last_stream_id:
+                        self._last_stream_id = last_stream_id
 
                 elif status == 409:
                     logger.warning(
@@ -337,7 +342,7 @@ class YouSelfGatewayTransport:
 
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
-            f"{self.gateway_url}/messages",
+            f"{self.gateway_url}/messages/send",
             data=data,
             headers={
                 "Authorization": f"Bearer {self.token}",
