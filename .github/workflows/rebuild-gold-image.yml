@@ -21,10 +21,12 @@ jobs:
           # Install sshpass
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Get next VMID (current + 1)
-          CURRENT=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "psql 'postgres://youself:mg53k2e78r@youself.psql.tools:10277/youself?sslmode=disable' \
-            -t -c \"SELECT value FROM system_settings WHERE key='proxmox_template_vmid'\" 2>/dev/null | tr -d ' '" 2>/dev/null || echo "9013")
+          # Get next VMID via Admin API
+          CURRENT=$(curl -s \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "$API_URL/admin/settings" | python3 -c \
+            "import sys,json; s=json.load(sys.stdin); print(next((x['value'] for x in s if x['key']=='proxmox_template_vmid'), '9013'))" \
+            2>/dev/null || echo "9013")
           NEXT=$((CURRENT + 1))
           echo "Current gold: $CURRENT → Next: $NEXT"
 
