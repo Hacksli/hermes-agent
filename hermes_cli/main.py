@@ -6232,7 +6232,7 @@ def cmd_youself(args):
     def _load_history():
         try:
             if os.path.isfile(_HISTORY_FILE):
-                with open(_HISTORY_FILE) as f:
+                with open(_HISTORY_FILE, encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, list):
                         return data
@@ -6245,7 +6245,7 @@ def cmd_youself(args):
             # Keep only last N messages to avoid unbounded growth
             trimmed = messages[-_MAX_HISTORY_MESSAGES:] if len(messages) > _MAX_HISTORY_MESSAGES else messages
             os.makedirs(os.path.dirname(_HISTORY_FILE), exist_ok=True)
-            with open(_HISTORY_FILE, "w") as f:
+            with open(_HISTORY_FILE, "w", encoding="utf-8") as f:
                 json.dump(trimmed, f, ensure_ascii=False)
         except Exception as e:
             logger.warning("Failed to save history: %s", e)

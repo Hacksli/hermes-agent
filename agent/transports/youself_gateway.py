@@ -39,7 +39,7 @@ def load_youself_env(path: str = "/etc/openclaw/env") -> None:
     the entries into ``os.environ``.  Missing file is silently ignored."""
     if not os.path.isfile(path):
         return
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -121,7 +121,7 @@ class YouSelfGatewayTransport:
         """Load last stream_id from disk, default to 0 (fetch all)."""
         try:
             if os.path.isfile(self._state_file):
-                val = open(self._state_file).read().strip()
+                val = open(self._state_file, encoding="utf-8").read().strip()
                 if val:
                     return val
         except Exception:
@@ -132,7 +132,7 @@ class YouSelfGatewayTransport:
         """Persist last stream_id to disk."""
         try:
             os.makedirs(os.path.dirname(self._state_file), exist_ok=True)
-            with open(self._state_file, "w") as f:
+            with open(self._state_file, "w", encoding="utf-8") as f:
                 f.write(stream_id)
         except Exception:
             pass
