@@ -18,20 +18,20 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.YOUSELF_ADMIN_TOKEN }}
           API_URL: ${{ secrets.YOUSELF_API_URL }}
         run: |
-          # Install sshpass
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Get next VMID via Admin API
-          CURRENT=$(curl -s \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$API_URL/admin/settings" | python3 -c \
-            "import sys,json; s=json.load(sys.stdin); print(next((x['value'] for x in s if x['key']=='proxmox_template_vmid'), '9013'))" \
-            2>/dev/null || echo "9013")
+          # Read current BASE_TEMPLATE from build script on Proxmox (source of truth)
+          CURRENT=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
+            "grep '^BASE_TEMPLATE=' /opt/build-gold-image.sh | cut -d= -f2" 2>/dev/null || echo "9014")
           NEXT=$((CURRENT + 1))
-          echo "Current gold: $CURRENT → Next: $NEXT"
+          echo "Current base: $CURRENT → Building: $NEXT"
 
-          # Run build script on Proxmox
+          # Update BASE_TEMPLATE and VERSION in build script
           sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "bash /opt/build-gold-image.sh $NEXT 2>&1" | tail -20
+            "sed -i \"s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$CURRENT/\" /opt/build-gold-image.sh"
 
-          echo "Gold image $NEXT built successfully"
+          # Run build - script auto-updates DB on success
+          sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
+            "bash /opt/build-gold-image.sh $NEXT 2>&1" | tee /tmp/build.log | tail -5
+
+          grep -q 'Gold image.*ready' /tmp/build.log && echo "✅ Gold image $NEXT built" || (echo '❌ Build failed' && exit 1)
