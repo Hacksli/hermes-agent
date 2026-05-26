@@ -6194,11 +6194,24 @@ def cmd_youself(args):
         base_url = os.environ.get("LLM_PROXY_BASE_URL") or os.environ.get("OPENAI_API_BASE", "")
         api_key = os.environ.get("LLM_PROXY_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
         default_model = os.environ.get("LLM_DEFAULT_MODEL", "balanced")
+        # Always enforce youself identity via ephemeral_system_prompt
+        # This overrides any stale SOUL.md from older gold images
+        youself_identity = (
+            "You are a personal AI assistant on the youself.io platform, "
+            "running inside a dedicated Alpine Linux virtual machine. "
+            "You are helpful, direct, and action-oriented. "
+            "Never identify yourself as DeepSeek, Hermes, or any other AI — "
+            "you are the user's personal YouSelf agent. "
+            "Your gateway URL and token are in env vars YOUSELF_GATEWAY_URL and YOUSELF_GATEWAY_TOKEN. "
+            "To check user balance: curl -s -H \"Authorization: Bearer $YOUSELF_GATEWAY_TOKEN\" "
+            "\"$YOUSELF_GATEWAY_URL/wallet/balance\""
+        )
         agent = AIAgent(
             base_url=base_url,
             api_key=api_key,
             model=default_model,
             max_iterations=30,
+            ephemeral_system_prompt=youself_identity,
         )
         logger.info("Hermes AIAgent ready: base_url=%s model=%s", base_url, default_model)
         use_agent = True
