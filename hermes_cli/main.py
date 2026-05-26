@@ -6188,57 +6188,59 @@ def cmd_youself(args):
 
     logger = logging.getLogger("hermes.youself")
 
-    # LLM client via youself LLM proxy (OpenAI-compatible)
+    # Use full Hermes AIAgent runtime with tool calling
     try:
-        from openai import OpenAI
-        llm = OpenAI(
-            base_url=os.environ.get("LLM_PROXY_BASE_URL") or os.environ.get("OPENAI_API_BASE", ""),
-            api_key=os.environ.get("LLM_PROXY_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
+        from run_agent import AIAgent
+        base_url = os.environ.get("LLM_PROXY_BASE_URL") or os.environ.get("OPENAI_API_BASE", "")
+        api_key = os.environ.get("LLM_PROXY_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+        default_model = os.environ.get("LLM_DEFAULT_MODEL", "balanced")
+        agent = AIAgent(
+            base_url=base_url,
+            api_key=api_key,
+            model=default_model,
+            max_iterations=30,
         )
-        default_model = os.environ.get("LLM_DEFAULT_MODEL", "thinking")
-        logger.info("LLM proxy ready: base_url=%s model=%s",
-                    os.environ.get("LLM_PROXY_BASE_URL", ""), default_model)
-    except ImportError:
-        llm = None
-        logger.warning("openai package not available; using echo handler")
+        logger.info("Hermes AIAgent ready: base_url=%s model=%s", base_url, default_model)
+        use_agent = True
+    except Exception as exc:
+        agent = None
+        use_agent = False
+        logger.warning("AIAgent init failed (%s); falling back to direct LLM", exc)
+        try:
+            from openai import OpenAI
+            llm = OpenAI(base_url=base_url, api_key=api_key)
+        except Exception:
+            llm = None
 
     def _handle_update(update: dict):
-        """Dispatch incoming update to LLM and return reply."""
+        """Dispatch incoming update through Hermes AIAgent runtime."""
         text = update.get("text") or update.get("content") or ""
         if not text:
             return None
 
-        if llm is None:
-            return f"[hermes] received: {text[:100]}"
+        if use_agent and agent is not None:
+            try:
+                logger.info("AIAgent request: %r", text[:80])
+                reply = agent.chat(text)
+                logger.info("AIAgent reply: %r", (reply or "")[:80])
+                return reply
+            except Exception as exc:
+                logger.error("AIAgent error: %s", exc)
+                return f"Помилка агента: {exc}"
 
-        try:
-            logger.info("LLM request: %r", text[:80])
-            resp = llm.chat.completions.create(
-                model=default_model,
-                messages=[
-                    {"role": "system", "content": """You are a personal AI assistant running inside a dedicated Linux virtual machine (Alpine Linux). You have full access to the terminal and can execute any shell commands, scripts, and programs.
+        # Fallback: direct LLM call
+        if llm is not None:
+            try:
+                resp = llm.chat.completions.create(
+                    model=default_model,
+                    messages=[{"role": "user", "content": text}],
+                    max_tokens=2048,
+                )
+                return resp.choices[0].message.content
+            except Exception as exc:
+                return f"Помилка: {exc}"
 
-Your capabilities:
-- Execute shell commands and scripts (bash, python, node, etc.)
-- Install packages with apk/pip3
-- Read and write files
-- Make HTTP requests
-- Run long-running processes
-- Access the internet
-
-When a user asks you to run something, DO IT — you are not a regular chatbot, you are an autonomous agent with real execution capabilities.
-
-Always respond in the same language the user writes in. Be concise and action-oriented. Show command outputs when relevant."""},
-                    {"role": "user", "content": text},
-                ],
-                max_tokens=2048,
-            )
-            reply = resp.choices[0].message.content
-            logger.info("LLM reply: %r", (reply or "")[:80])
-            return reply
-        except Exception as exc:
-            logger.error("LLM error: %s", exc)
-            return f"Помилка: {exc}"
+        return f"[echo] {text[:100]}"
 
     transport = YouSelfGatewayTransport(_handle_update, mode=mode)
     try:
