@@ -169,10 +169,11 @@ class YouSelfGatewayTransport:
                         updates_list = updates
 
                     last_stream_id = None
-                    for update in updates_list:
+                    for item in updates_list:
+                        # Unwrap {"stream_id": "...", "update": {...}} envelope
+                        sid = item.get("stream_id")
+                        update = item.get("update", item)  # unwrap or use as-is
                         self._handle_and_reply(update)
-                        # stream_id format: "1714390800123-0" — pass as-is for next offset
-                        sid = update.get("stream_id")
                         if sid:
                             last_stream_id = sid
                     if last_stream_id:
