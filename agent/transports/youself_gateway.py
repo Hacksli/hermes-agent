@@ -196,12 +196,13 @@ class YouSelfGatewayTransport:
                         # Unwrap {"stream_id": "...", "update": {...}} envelope
                         sid = item.get("stream_id")
                         update = item.get("update", item)  # unwrap or use as-is
-                        self._handle_and_reply(update)
                         if sid:
                             last_stream_id = sid
-                    if last_stream_id:
-                        self._last_stream_id = last_stream_id
-                        self._save_offset(last_stream_id)
+                            # Save offset BEFORE processing so restarts
+                            # don't replay already-seen messages
+                            self._last_stream_id = sid
+                            self._save_offset(sid)
+                        self._handle_and_reply(update)
 
                 elif status == 409:
                     logger.warning(
