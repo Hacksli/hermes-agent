@@ -6176,7 +6176,7 @@ def cmd_cron(args):
 def cmd_youself(args):
     """Run Hermes as a youself.io gateway transport (long-poll / WebSocket / SSE)."""
     from agent.transports.youself_gateway import YouSelfGatewayTransport, load_youself_env
-    import logging
+    import logging, os
 
     load_youself_env()
 
@@ -6186,24 +6186,50 @@ def cmd_youself(args):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Lazy-import the agent runtime so the transport can call it.
-    from cli import main as cli_main  # noqa: F401 — ensure runtime is importable
+    logger = logging.getLogger("hermes.youself")
+
+    # LLM client via youself LLM proxy (OpenAI-compatible)
+    try:
+        from openai import OpenAI
+        llm = OpenAI(
+            base_url=os.environ.get("LLM_PROXY_BASE_URL") or os.environ.get("OPENAI_API_BASE", ""),
+            api_key=os.environ.get("LLM_PROXY_API_KEY") or os.environ.get("OPENAI_API_KEY", ""),
+        )
+        default_model = os.environ.get("LLM_DEFAULT_MODEL", "thinking")
+        logger.info("LLM proxy ready: base_url=%s model=%s",
+                    os.environ.get("LLM_PROXY_BASE_URL", ""), default_model)
+    except ImportError:
+        llm = None
+        logger.warning("openai package not available; using echo handler")
 
     def _handle_update(update: dict):
-        """Minimal echo handler — replace with real agent dispatch."""
-        msg = update.get("message") or update
-        text = msg.get("text") or msg.get("content") or ""
+        """Dispatch incoming update to LLM and return reply."""
+        text = update.get("text") or update.get("content") or ""
         if not text:
             return None
-        # TODO: pipe *text* through the Hermes agent runtime and return reply
-        return f"[hermes] received: {text[:100]}"
+
+        if llm is None:
+            return f"[hermes] received: {text[:100]}"
+
+        try:
+            logger.info("LLM request: %r", text[:80])
+            resp = llm.chat.completions.create(
+                model=default_model,
+                messages=[{"role": "user", "content": text}],
+                max_tokens=1024,
+            )
+            reply = resp.choices[0].message.content
+            logger.info("LLM reply: %r", (reply or "")[:80])
+            return reply
+        except Exception as exc:
+            logger.error("LLM error: %s", exc)
+            return f"Помилка: {exc}"
 
     transport = YouSelfGatewayTransport(_handle_update, mode=mode)
     try:
         transport.run()
     except KeyboardInterrupt:
         pass
-
 
 def cmd_webhook(args):
     """Webhook subscription management."""
