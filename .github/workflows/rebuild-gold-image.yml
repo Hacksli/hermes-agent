@@ -1,0 +1,35 @@
+name: Rebuild youself.io Gold Image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Trigger gold image rebuild on Proxmox
+        env:
+          PROXMOX_HOST: ${{ secrets.YOUSELF_PROXMOX_HOST }}
+          PROXMOX_PASSWORD: ${{ secrets.YOUSELF_PROXMOX_PASSWORD }}
+          ADMIN_TOKEN: ${{ secrets.YOUSELF_ADMIN_TOKEN }}
+          API_URL: ${{ secrets.YOUSELF_API_URL }}
+        run: |
+          # Install sshpass
+          sudo apt-get install -y sshpass 2>/dev/null
+
+          # Get next VMID (current + 1)
+          CURRENT=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
+            "psql 'postgres://youself:mg53k2e78r@youself.psql.tools:10277/youself?sslmode=disable' \
+            -t -c \"SELECT value FROM system_settings WHERE key='proxmox_template_vmid'\" 2>/dev/null | tr -d ' '" 2>/dev/null || echo "9013")
+          NEXT=$((CURRENT + 1))
+          echo "Current gold: $CURRENT → Next: $NEXT"
+
+          # Run build script on Proxmox
+          sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
+            "bash /opt/build-gold-image.sh $NEXT 2>&1" | tail -20
+
+          echo "Gold image $NEXT built successfully"
