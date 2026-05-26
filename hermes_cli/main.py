@@ -6212,6 +6212,31 @@ def cmd_youself(args):
         except Exception:
             llm = None
 
+    # Conversation history storage — persisted to disk across restarts
+    _HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".hermes", "youself_history.json")
+    _MAX_HISTORY_MESSAGES = 40  # keep last 20 exchanges (user+assistant pairs)
+
+    def _load_history():
+        try:
+            if os.path.isfile(_HISTORY_FILE):
+                with open(_HISTORY_FILE) as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+        except Exception:
+            pass
+        return []
+
+    def _save_history(messages):
+        try:
+            # Keep only last N messages to avoid unbounded growth
+            trimmed = messages[-_MAX_HISTORY_MESSAGES:] if len(messages) > _MAX_HISTORY_MESSAGES else messages
+            os.makedirs(os.path.dirname(_HISTORY_FILE), exist_ok=True)
+            with open(_HISTORY_FILE, "w") as f:
+                json.dump(trimmed, f, ensure_ascii=False)
+        except Exception as e:
+            logger.warning("Failed to save history: %s", e)
+
     def _handle_update(update: dict):
         """Dispatch incoming update through Hermes AIAgent runtime."""
         text = update.get("text") or update.get("content") or ""
@@ -6220,8 +6245,12 @@ def cmd_youself(args):
 
         if use_agent and agent is not None:
             try:
-                logger.info("AIAgent request: %r", text[:80])
-                reply = agent.chat(text)
+                history = _load_history()
+                logger.info("AIAgent request: %r (history: %d msgs)", text[:80], len(history))
+                result = agent.run_conversation(text, conversation_history=history)
+                reply = result.get("final_response") or ""
+                # Persist updated conversation history
+                _save_history(result.get("messages", []))
                 logger.info("AIAgent reply: %r", (reply or "")[:80])
                 return reply
             except Exception as exc:
