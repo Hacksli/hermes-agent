@@ -341,13 +341,13 @@ class YouSelfGatewayTransport:
             if update_id is not None:
                 payload["reply_to_update_id"] = update_id
 
-        data = json.dumps(payload).encode()
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             f"{self.gateway_url}/messages/send",
             data=data,
             headers={
                 "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
+                "Content-Type": "application/json; charset=utf-8",
             },
             method="POST",
         )
