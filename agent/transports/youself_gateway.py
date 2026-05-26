@@ -192,6 +192,7 @@ class YouSelfGatewayTransport:
                     else:
                         updates_list = updates
 
+                    last_stream_id = None  # init before loop
                     for item in updates_list:
                         # Unwrap {"stream_id": "...", "update": {...}} envelope
                         sid = item.get("stream_id")
