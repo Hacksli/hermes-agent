@@ -98,6 +98,11 @@ class YouSelfGatewayTransport:
         self.mode = mode
         self._offset: int = 0
         self._running = False
+        # Persist last stream_id across restarts to avoid replaying old messages
+        self._state_file = os.path.join(
+            os.path.expanduser("~"), ".hermes", "youself_offset.txt"
+        )
+        self._last_stream_id = self._load_offset()
 
         if not self.gateway_url:
             raise ValueError(
@@ -111,6 +116,26 @@ class YouSelfGatewayTransport:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _load_offset(self) -> str:
+        """Load last stream_id from disk, default to 0 (fetch all)."""
+        try:
+            if os.path.isfile(self._state_file):
+                val = open(self._state_file).read().strip()
+                if val:
+                    return val
+        except Exception:
+            pass
+        return "0"
+
+    def _save_offset(self, stream_id: str) -> None:
+        """Persist last stream_id to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._state_file), exist_ok=True)
+            with open(self._state_file, "w") as f:
+                f.write(stream_id)
+        except Exception:
+            pass
 
     def run(self) -> None:
         """Block and serve updates.  Runs until stopped or a fatal error."""
@@ -143,10 +168,9 @@ class YouSelfGatewayTransport:
 
         backoff = self._BACKOFF_BASE
         while self._running:
-            last_sid = getattr(self, "_last_stream_id", "0")
             url = (
                 f"{self.gateway_url}/updates"
-                f"?offset={last_sid}&timeout=30"
+                f"?offset={self._last_stream_id}&timeout=30"
             )
             req = urllib.request.Request(
                 url,
@@ -168,7 +192,6 @@ class YouSelfGatewayTransport:
                     else:
                         updates_list = updates
 
-                    last_stream_id = None
                     for item in updates_list:
                         # Unwrap {"stream_id": "...", "update": {...}} envelope
                         sid = item.get("stream_id")
@@ -178,6 +201,7 @@ class YouSelfGatewayTransport:
                             last_stream_id = sid
                     if last_stream_id:
                         self._last_stream_id = last_stream_id
+                        self._save_offset(last_stream_id)
 
                 elif status == 409:
                     logger.warning(
