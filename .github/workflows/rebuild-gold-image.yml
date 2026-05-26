@@ -11,27 +11,22 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Trigger gold image rebuild on Proxmox
+      - name: Build gold image on Proxmox
         env:
           PROXMOX_HOST: ${{ secrets.YOUSELF_PROXMOX_HOST }}
           PROXMOX_PASSWORD: ${{ secrets.YOUSELF_PROXMOX_PASSWORD }}
-          ADMIN_TOKEN: ${{ secrets.YOUSELF_ADMIN_TOKEN }}
-          API_URL: ${{ secrets.YOUSELF_API_URL }}
         run: |
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Read current BASE_TEMPLATE from build script on Proxmox (source of truth)
-          CURRENT=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "grep '^BASE_TEMPLATE=' /opt/build-gold-image.sh | cut -d= -f2" 2>/dev/null || echo "9014")
-          NEXT=$((CURRENT + 1))
-          echo "Current base: $CURRENT → Building: $NEXT"
-
-          # Update BASE_TEMPLATE and VERSION in build script
+          # Script auto-increments VMID, updates BASE_TEMPLATE, updates DB
           sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "sed -i \"s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$CURRENT/\" /opt/build-gold-image.sh"
+            "bash /opt/build-gold-image.sh 2>&1" | tee /tmp/build.log
 
-          # Run build - script auto-updates DB on success
-          sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "bash /opt/build-gold-image.sh $NEXT 2>&1" | tee /tmp/build.log | tail -5
-
-          grep -q 'Gold image.*ready' /tmp/build.log && echo "✅ Gold image $NEXT built" || (echo '❌ Build failed' && exit 1)
+          # Verify success
+          if grep -q 'Gold image.*ready' /tmp/build.log; then
+            echo "✅ $(grep 'Gold image.*ready' /tmp/build.log | tail -1)"
+          else
+            echo "❌ Build failed"
+            cat /tmp/build.log
+            exit 1
+          fi
