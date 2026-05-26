@@ -155,7 +155,7 @@ class YouSelfGatewayTransport:
             try:
                 with urllib.request.urlopen(req, timeout=40) as resp:
                     status = resp.status
-                    body = resp.read()
+                    body = resp.read().decode("utf-8")
 
                 if status == 200:
                     backoff = self._BACKOFF_BASE  # reset on success
