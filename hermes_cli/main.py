@@ -6270,6 +6270,45 @@ def cmd_youself(args):
             if transcript:
                 text = f"[Audio message]: {transcript}"
 
+        # Handle photo — download and save locally so agent can analyze
+        if not text:
+            photos = update.get("photo") or []
+            if photos:
+                photo = photos[-1] if isinstance(photos, list) else photos  # largest size
+                file_url = photo.get("file_url", "")
+                caption = update.get("caption", "")
+                if file_url:
+                    import urllib.request as _ur
+                    import os as _os
+                    try:
+                        local_path = f"/tmp/photo_{update.get('id','img')}.jpg"
+                        _ur.urlretrieve(file_url, local_path)
+                        text = f"[Photo attached: {local_path}]"
+                        if caption:
+                            text += f"\n{caption}"
+                    except Exception as e:
+                        text = f"[Photo received, download failed: {e}]"
+                        if caption:
+                            text += f"\n{caption}"
+
+        # Handle document — download and save locally
+        if not text:
+            doc = update.get("document") or {}
+            if doc:
+                file_url = doc.get("file_url", "")
+                file_name = doc.get("file_name", "document")
+                caption = update.get("caption", "")
+                if file_url:
+                    import urllib.request as _ur
+                    try:
+                        local_path = f"/tmp/{file_name}"
+                        _ur.urlretrieve(file_url, local_path)
+                        text = f"[File attached: {local_path}]"
+                        if caption:
+                            text += f"\n{caption}"
+                    except Exception as e:
+                        text = f"[File received ({file_name}), download failed: {e}]"
+
         if not text:
             return None
 
