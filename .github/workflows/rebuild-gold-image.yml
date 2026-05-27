@@ -30,3 +30,17 @@ jobs:
             cat /tmp/build.log
             exit 1
           fi
+
+      - name: Update all running client VMs
+        env:
+          ADMIN_TOKEN: ${{ secrets.YOUSELF_ADMIN_TOKEN }}
+          API_URL: ${{ secrets.YOUSELF_API_URL }}
+        run: |
+          RESP=$(curl -s -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$API_URL/admin/agents/update")
+          echo "Agent update: $RESP"
+          # Check enqueued > 0
+          ENQUEUED=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('enqueued',0))" 2>/dev/null || echo 0)
+          echo "✅ Queued updates for $ENQUEUED VMs"
