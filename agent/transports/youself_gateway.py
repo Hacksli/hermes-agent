@@ -331,23 +331,60 @@ class YouSelfGatewayTransport:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _send_typing(self, chat_id=None) -> None:
+        """Send 'typing' chat action to Telegram via gateway."""
+        import urllib.request
+        import urllib.error
+        try:
+            payload = json.dumps({"action": "typing"}).encode()
+            req = urllib.request.Request(
+                f"{self.gateway_url}/typing",
+                data=payload,
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass  # typing is best-effort
+
     def _handle_and_reply(self, update: dict) -> None:
         """Call handler with *update*, then POST the reply if one is returned."""
-        try:
-            reply = self.handler(update)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Handler raised an exception: %s", exc)
-            return
-
-        if reply is None:
-            return
-
+        import threading
         chat_id = (
             update.get("chat_id")
             or update.get("channel_id")
             or (update.get("message") or {}).get("chat", {}).get("id")
         )
-        self._post_message(reply, chat_id=chat_id, update=update)
+
+        # Keep sending typing indicator every 4s while handler is running
+        stop_typing = threading.Event()
+        def _typing_loop():
+            while not stop_typing.wait(4):
+                self._send_typing(chat_id)
+        self._send_typing(chat_id)
+        typing_thread = threading.Thread(target=_typing_loop, daemon=True)
+        typing_thread.start()
+
+        try:
+            reply = self.handler(update)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Handler raised an exception: %s", exc)
+            reply = None
+        finally:
+            stop_typing.set()
+
+        if reply is None:
+            return
+
+        chat_id_for_reply = (
+            update.get("chat_id")
+            or update.get("channel_id")
+            or (update.get("message") or {}).get("chat", {}).get("id")
+        )
+        self._post_message(reply, chat_id=chat_id_for_reply, update=update)
 
     def _post_message(
         self,
