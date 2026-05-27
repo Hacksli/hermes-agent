@@ -18,7 +18,13 @@ jobs:
         run: |
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Script auto-increments VMID, updates BASE_TEMPLATE, updates DB
+          # Copy build script from repo to Proxmox (preserving BASE_TEMPLATE)
+          REMOTE_BASE=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
+            "grep '^BASE_TEMPLATE=' /opt/build-gold-image.sh | cut -d= -f2" 2>/dev/null || echo "9039")
+          sed "s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$REMOTE_BASE/" scripts/build-gold-image.sh > /tmp/build-gold-image.sh
+          sshpass -p "$PROXMOX_PASSWORD" scp -o StrictHostKeyChecking=no /tmp/build-gold-image.sh root@$PROXMOX_HOST:/opt/build-gold-image.sh
+
+          # Run the script
           sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
             "bash /opt/build-gold-image.sh 2>&1" | tee /tmp/build.log
 
