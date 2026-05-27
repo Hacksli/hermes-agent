@@ -6357,6 +6357,11 @@ def cmd_youself(args):
         if not text:
             return None
 
+        # Check balance before calling LLM — block if empty
+        balance = _check_balance()
+        if balance == 0:
+            return "⚠️ На жаль, я не можу відповісти — ваш баланс вичерпано. Будь ласка, поповніть рахунок щоб продовжувати спілкування."
+
         if use_agent and agent is not None:
             try:
                 history = _load_history()
@@ -6375,17 +6380,16 @@ def cmd_youself(args):
                     reply = "\n".join(clean_lines).strip()
                 logger.info("AIAgent reply: %r", (reply or "")[:80])
 
-                # Check balance after every N messages or if empty
+                # Add balance reminder every N messages when low (but not empty — blocked above)
                 msg_count = _inc_msg_count()
-                balance = _check_balance()
-                should_warn = (
-                    balance == 0  # empty
-                    or (balance > 0 and balance < _LOW_BALANCE_THRESHOLD)  # < 1 EUR
-                    or (msg_count % _BALANCE_REMINDER_INTERVAL == 0 and balance >= 0 and balance < _LOW_BALANCE_THRESHOLD * 3)  # every 10 msgs if < 3 EUR
-                )
-                if should_warn and balance >= 0:
-                    warning = _balance_warning(balance)
-                    reply = (reply + "\n\n" + warning).strip() if reply else warning
+                if balance > 0:  # balance already fetched before LLM call
+                    should_warn = (
+                        balance < _LOW_BALANCE_THRESHOLD  # < 1 EUR always
+                        or (msg_count % _BALANCE_REMINDER_INTERVAL == 0 and balance < _LOW_BALANCE_THRESHOLD * 3)  # every 10 msgs if < 3 EUR
+                    )
+                    if should_warn:
+                        warning = _balance_warning(balance)
+                        reply = (reply + "\n\n" + warning).strip() if reply else warning
 
                 return reply or None
             except Exception as exc:
