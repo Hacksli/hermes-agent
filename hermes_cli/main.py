@@ -6253,6 +6253,21 @@ def cmd_youself(args):
     def _handle_update(update: dict):
         """Dispatch incoming update through Hermes AIAgent runtime."""
         text = update.get("text") or update.get("content") or ""
+
+        # Extract voice transcript if no text
+        if not text:
+            voice = update.get("voice") or {}
+            transcript = voice.get("transcript", "")
+            if transcript:
+                text = f"[Voice message]: {transcript}"
+
+        # Extract audio transcript if still no text
+        if not text:
+            audio = update.get("audio") or {}
+            transcript = audio.get("transcript", "")
+            if transcript:
+                text = f"[Audio message]: {transcript}"
+
         if not text:
             return None
 
