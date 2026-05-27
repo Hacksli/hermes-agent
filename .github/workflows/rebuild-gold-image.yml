@@ -18,10 +18,11 @@ jobs:
         run: |
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Fetch all infra scripts from deployment repo
+          # Fetch all infra scripts from deployment repo (private — needs token)
           BASE_URL="https://raw.githubusercontent.com/Hacksli/deployment-youself-io-go-backend/main/scripts"
           for script in build-gold-image.sh setup-hermes.sh scrub-vm.sh; do
-            curl -sf "$BASE_URL/$script" -o "/tmp/$script"
+            curl -sf -H "Authorization: token ${{ secrets.YOUSELF_DEPLOY_GITHUB_TOKEN }}" \
+              "$BASE_URL/$script" -o "/tmp/$script"
           done
 
           # Preserve BASE_TEMPLATE from Proxmox
