@@ -6211,6 +6211,7 @@ def cmd_youself(args):
             api_key=api_key,
             model=default_model,
             max_iterations=10,  # reduced to avoid 429 from DeepSeek concurrent limit
+            tool_delay=2.0,     # 2s pause between tool calls to avoid burst 429
             ephemeral_system_prompt=youself_identity,
         )
         logger.info("Hermes AIAgent ready: base_url=%s model=%s", base_url, default_model)
