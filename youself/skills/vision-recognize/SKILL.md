@@ -57,21 +57,17 @@ You — the agent — must read the user's message, the recent conversation, the
 * Asking the user to take an action — text is cheaper and immediate.
 * Empty prompts (`{prompt: "?", file_url: ...}`) — write a real question, the prompt steers the model.
 
-## Endpoint
+## How you call it — use the wrapper, NOT raw curl
 
-```
-POST $YOUSELF_GATEWAY_URL/youself-gateway/v1/vision/recognize
-Authorization: Bearer $YOUSELF_GATEWAY_TOKEN
-Content-Type: application/json
+The platform redacts the gateway token from any shell command you execute, so a direct `curl -H "Authorization: Bearer $YOUSELF_GATEWAY_TOKEN" ...` will fail with auth error. Instead, use the pre-installed wrapper that sources the env on your behalf:
 
-{
-  "prompt":     "What is in this photo? Describe in detail.",
-  "file_url":   "<signed URL from the update's photo.file_url>",
-  "max_tokens": 1024   // optional, default 1024
-}
+```sh
+youself-vision "<signed file_url from the /updates payload>" "<your focused prompt>"
 ```
 
-`file_url` is exactly the signed URL the gateway pushes to you in `/updates`. Pass it through — the backend extracts the file ULID, fetches the bytes from Telegram, and base64-encodes for Claude.
+Returns the same JSON as the underlying endpoint — see Response below.
+
+If for some reason the wrapper is missing (very old VM), the underlying endpoint is `POST $YOUSELF_GATEWAY_URL/youself-gateway/v1/vision/recognize` with body `{prompt, file_url, max_tokens?}` and Bearer auth — but on a current VM you should never hit that path. `file_url` is exactly the signed URL the gateway pushes to you in `/updates`; pass it through — the backend extracts the file ULID, fetches the bytes from Telegram, and base64-encodes for Claude.
 
 ### Response
 
@@ -107,20 +103,15 @@ The user sends a photo of a restaurant menu and asks "what does the second dish 
 }
 ```
 
-You call:
+You call (using the wrapper — token never appears in your command surface):
 
-```bash
-curl -fsS -X POST \
-  -H "Authorization: Bearer $YOUSELF_GATEWAY_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "Read the menu in this photo. What is the second dish listed and how much does it cost? Reply in the same language as the menu.",
-    "file_url": "https://api.youself.io/youself-gateway/v1/files/01HZ...?sig=...&exp=..."
-  }' \
-  "$YOUSELF_GATEWAY_URL/youself-gateway/v1/vision/recognize"
+```sh
+youself-vision \
+  "https://api.youself.io/youself-gateway/v1/files/01HZ...?sig=...&exp=..." \
+  "Read the menu in this photo. What is the second dish listed and how much does it cost? Reply in the same language as the menu."
 ```
 
-Then relay the `text` field back to the user via your normal reply.
+Output (stdout) — JSON. Parse `text`, relay back via `youself-send-text` or just include in your normal reply.
 
 ## Constraints and errors
 
