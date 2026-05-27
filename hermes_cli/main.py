@@ -6230,6 +6230,51 @@ def cmd_youself(args):
     # Conversation history storage — persisted to disk across restarts
     _HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".hermes", "youself_history.json")
     _MAX_HISTORY_MESSAGES = 40  # keep last 20 exchanges (user+assistant pairs)
+    _MSG_COUNT_FILE = os.path.join(os.path.expanduser("~"), ".hermes", "youself_msg_count.txt")
+    _LOW_BALANCE_THRESHOLD = 100  # cents (1 EUR)
+    _BALANCE_REMINDER_INTERVAL = 10  # messages
+
+    def _get_msg_count() -> int:
+        try:
+            if os.path.isfile(_MSG_COUNT_FILE):
+                return int(open(_MSG_COUNT_FILE).read().strip())
+        except Exception:
+            pass
+        return 0
+
+    def _inc_msg_count() -> int:
+        count = _get_msg_count() + 1
+        try:
+            os.makedirs(os.path.dirname(_MSG_COUNT_FILE), exist_ok=True)
+            with open(_MSG_COUNT_FILE, "w") as f:
+                f.write(str(count))
+        except Exception:
+            pass
+        return count
+
+    def _check_balance() -> int:
+        """Returns balance in cents, or -1 on error."""
+        try:
+            import urllib.request
+            gw_url = os.environ.get("YOUSELF_GATEWAY_URL", "")
+            gw_token = os.environ.get("YOUSELF_GATEWAY_TOKEN", "")
+            if not gw_url or not gw_token:
+                return -1
+            req = urllib.request.Request(
+                f"{gw_url}/wallet/balance",
+                headers={"Authorization": f"Bearer {gw_token}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.loads(r.read())
+                return int(data.get("balance_cents", -1))
+        except Exception:
+            return -1
+
+    def _balance_warning(balance_cents: int) -> str:
+        eur = f"{balance_cents / 100:.2f}"
+        if balance_cents <= 0:
+            return f"⚠️ Ваш баланс вичерпано. Поповніть рахунок щоб продовжувати користуватись агентом."
+        return f"⚠️ Нагадуємо: на вашому рахунку залишилось {eur}€. Поповніть баланс щоб продовжувати користуватись."
 
     def _load_history():
         try:
@@ -6329,6 +6374,19 @@ def cmd_youself(args):
                         clean_lines.pop()
                     reply = "\n".join(clean_lines).strip()
                 logger.info("AIAgent reply: %r", (reply or "")[:80])
+
+                # Check balance after every N messages or if empty
+                msg_count = _inc_msg_count()
+                balance = _check_balance()
+                should_warn = (
+                    balance == 0  # empty
+                    or (balance > 0 and balance < _LOW_BALANCE_THRESHOLD)  # < 1 EUR
+                    or (msg_count % _BALANCE_REMINDER_INTERVAL == 0 and balance >= 0 and balance < _LOW_BALANCE_THRESHOLD * 3)  # every 10 msgs if < 3 EUR
+                )
+                if should_warn and balance >= 0:
+                    warning = _balance_warning(balance)
+                    reply = (reply + "\n\n" + warning).strip() if reply else warning
+
                 return reply or None
             except Exception as exc:
                 logger.error("AIAgent error: %s", exc)
