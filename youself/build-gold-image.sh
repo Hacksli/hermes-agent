@@ -106,7 +106,7 @@ log "Step 9: BASE_TEMPLATE is read from DB on each run - no local update needed"
 # 10. Update system_settings via Admin API
 log "Step 10: Updating proxmox_template_vmid in DB"
 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H "Authorization: Bearer ${YOUSELF_ADMIN_TOKEN}" \
   -H "Content-Type: application/json" \
   -d "{\"value\":\"${TARGET_VMID}\"}" \
   "https://api.youself.io/admin/settings/proxmox_template_vmid")
