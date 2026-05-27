@@ -103,7 +103,7 @@ log "Step 9: BASE_TEMPLATE already updated to ${TARGET_VMID}"
 
 # 10. Update system_settings via Admin API
 log "Step 10: Updating proxmox_template_vmid in DB"
-ADMIN_TOKEN="tXZtPekiLGhdMeIcNnOMyYrVHRPLvuRuJUHqHloFWIuADKIIwriJSLwLwvlnTQtw"
+ADMIN_TOKEN="${YOUSELF_ADMIN_TOKEN:-}"  # set via env or CI secret
 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
   -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   -H "Content-Type: application/json" \

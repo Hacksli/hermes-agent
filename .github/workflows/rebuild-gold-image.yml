@@ -30,9 +30,9 @@ jobs:
           sshpass -p "$PROXMOX_PASSWORD" scp -o StrictHostKeyChecking=no \
             /tmp/build-gold-image.sh root@$PROXMOX_HOST:/opt/build-gold-image.sh
 
-          # Run the script
+          # Run the script with secrets passed as env vars
           sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "bash /opt/build-gold-image.sh 2>&1" | tee /tmp/build.log
+            "YOUSELF_ADMIN_TOKEN='${{ secrets.YOUSELF_ADMIN_TOKEN }}' bash /opt/build-gold-image.sh 2>&1" | tee /tmp/build.log
 
           # Verify success
           if grep -q 'Gold image.*ready' /tmp/build.log; then
