@@ -37,5 +37,5 @@ else
     echo "[install-vm] Skipping OpenRC service install (${INIT_D} not found or service file missing)."
 fi
 
-echo "[install-vm] Done. Set YOUSELF_GATEWAY_URL and YOUSELF_GATEWAY_TOKEN in /etc/openclaw/env"
+echo "[install-vm] Done. Set YOUSELF_GATEWAY_URL and YOUSELF_GATEWAY_TOKEN in /etc/hermes/env"
 echo "[install-vm] then start with: python3 -m hermes --transport youself_gateway"

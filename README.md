@@ -179,7 +179,7 @@ Hermes ships a built-in transport adapter for the [youself.io](https://youself.i
 
 ### Quick start
 
-**1. Set environment variables** (or write them to `/etc/openclaw/env`):
+**1. Set environment variables** (or write them to `/etc/hermes/env`):
 
 ```sh
 export YOUSELF_GATEWAY_URL=https://gateway.youself.io
@@ -228,7 +228,7 @@ tail -f /var/log/hermes/agent.log
 tail -f /var/log/hermes/agent.err
 ```
 
-The OpenRC service (`etc/init.d/hermes`) reads `/etc/openclaw/env` on startup
+The OpenRC service (`etc/init.d/hermes`) reads `/etc/hermes/env` on startup
 and exports `OPENAI_API_BASE` / `OPENAI_API_KEY` from the youself.io LLM proxy
 credentials automatically.
 

@@ -10,7 +10,7 @@ command_stdout="/var/log/hermes/agent.log"
 command_stderr="/var/log/hermes/agent.err"
 
 start_pre() {
-    [ -f /etc/openclaw/env ] && export $(grep -v '^#' /etc/openclaw/env | xargs)
+    [ -f /etc/hermes/env ] && export $(grep -v '^#' /etc/hermes/env | xargs)
     export OPENAI_API_BASE="${LLM_PROXY_BASE_URL:-}"
     export OPENAI_API_KEY="${LLM_PROXY_API_KEY:-}"
 }

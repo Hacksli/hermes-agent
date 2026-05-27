@@ -12267,7 +12267,7 @@ def main():
         description=(
             "Start Hermes as a youself.io gateway transport.  "
             "Reads credentials from YOUSELF_GATEWAY_URL / YOUSELF_GATEWAY_TOKEN "
-            "environment variables (or /etc/openclaw/env on Alpine VMs)."
+            "environment variables (or /etc/hermes/env on Alpine VMs)."
         ),
     )
     youself_parser.add_argument(

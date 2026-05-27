@@ -14,7 +14,7 @@ Environment:
   YOUSELF_GATEWAY_URL    Base URL of the youself.io gateway (no trailing slash)
   YOUSELF_GATEWAY_TOKEN  Bearer token for authentication
 
-The helper ``load_youself_env()`` reads /etc/openclaw/env and injects its
+The helper ``load_youself_env()`` reads /etc/hermes/env and injects its
 key=value pairs into os.environ before any transport instance is created.
 """
 
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Env loader
 # ---------------------------------------------------------------------------
 
-def load_youself_env(path: str = "/etc/openclaw/env") -> None:
+def load_youself_env(path: str = "/etc/hermes/env") -> None:
     """Read *path* (key=value, lines starting with # ignored) and inject
     the entries into ``os.environ``.  Missing file is silently ignored."""
     if not os.path.isfile(path):
