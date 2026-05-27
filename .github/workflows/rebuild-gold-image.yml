@@ -18,10 +18,13 @@ jobs:
         run: |
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Copy build script from repo to Proxmox (preserving BASE_TEMPLATE)
+          # Fetch build script from deployment repo (preserving BASE_TEMPLATE from Proxmox)
+          curl -sf -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://raw.githubusercontent.com/Hacksli/deployment-youself-io-go-backend/main/scripts/build-gold-image.sh" \
+            -o /tmp/build-gold-image-repo.sh
           REMOTE_BASE=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
             "grep '^BASE_TEMPLATE=' /opt/build-gold-image.sh | cut -d= -f2" 2>/dev/null || echo "9039")
-          sed "s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$REMOTE_BASE/" scripts/build-gold-image.sh > /tmp/build-gold-image.sh
+          sed "s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$REMOTE_BASE/" /tmp/build-gold-image-repo.sh > /tmp/build-gold-image.sh
           sshpass -p "$PROXMOX_PASSWORD" scp -o StrictHostKeyChecking=no /tmp/build-gold-image.sh root@$PROXMOX_HOST:/opt/build-gold-image.sh
 
           # Run the script
