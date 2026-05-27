@@ -23,12 +23,9 @@ jobs:
         run: |
           sudo apt-get install -y sshpass 2>/dev/null
 
-          # Preserve BASE_TEMPLATE from Proxmox, then upload script
-          REMOTE_BASE=$(sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
-            "grep '^BASE_TEMPLATE=' /opt/build-gold-image.sh | cut -d= -f2" 2>/dev/null || echo "9039")
-          sed "s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$REMOTE_BASE/" youself/build-gold-image.sh > /tmp/build-gold-image.sh
+          # Upload latest script (BASE_TEMPLATE is read from /admin/settings at runtime)
           sshpass -p "$PROXMOX_PASSWORD" scp -o StrictHostKeyChecking=no \
-            /tmp/build-gold-image.sh root@$PROXMOX_HOST:/opt/build-gold-image.sh
+            youself/build-gold-image.sh root@$PROXMOX_HOST:/opt/build-gold-image.sh
 
           # Run the script with secrets passed as env vars
           sshpass -p "$PROXMOX_PASSWORD" ssh -o StrictHostKeyChecking=no root@$PROXMOX_HOST \
@@ -41,19 +38,6 @@ jobs:
             echo "❌ Build failed"
             cat /tmp/build.log
             exit 1
-          fi
-
-      - name: Commit updated BASE_TEMPLATE to repo
-        run: |
-          NEW_BASE=$(sshpass -p "${{ secrets.YOUSELF_PROXMOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no root@${{ secrets.YOUSELF_PROXMOX_HOST }} \
-            "grep '^BASE_TEMPLATE=' /opt/build-gold-image.sh | cut -d= -f2" 2>/dev/null)
-          if [ -n "$NEW_BASE" ]; then
-            sed -i "s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=$NEW_BASE/" youself/build-gold-image.sh
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add youself/build-gold-image.sh
-            git diff --staged --quiet || git commit -m "ci: update BASE_TEMPLATE to $NEW_BASE [skip ci]"
-            git push
           fi
 
       - name: Update all running client VMs
