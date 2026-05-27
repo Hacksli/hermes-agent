@@ -414,6 +414,23 @@ else
     fi
 fi
 
+# YouSelf-platform skills are not in the pip package — fetch directly from
+# the repo (same approach as the main.py patch in build-gold-image.sh).
+# Each new skill: add its SKILL.md path to the list below.
+YOUSELF_SKILLS=(
+    "vision-recognize"
+)
+YOUSELF_RAW_BASE="https://raw.githubusercontent.com/Hacksli/hermes-agent/main/youself/skills"
+mkdir -p "$HERMES_SKILLS_DIR/youself"
+for ys in "${YOUSELF_SKILLS[@]}"; do
+    mkdir -p "$HERMES_SKILLS_DIR/youself/$ys"
+    if wget -q "$YOUSELF_RAW_BASE/$ys/SKILL.md" -O "$HERMES_SKILLS_DIR/youself/$ys/SKILL.md"; then
+        echo -e "${GREEN}✓${NC} YouSelf skill: $ys"
+    else
+        echo "  (skipped YouSelf skill $ys — fetch failed)"
+    fi
+done
+
 # ============================================================================
 # Done
 # ============================================================================
