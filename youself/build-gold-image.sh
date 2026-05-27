@@ -8,7 +8,7 @@ set -euo pipefail
 
 HERMES_REPO="https://github.com/Hacksli/hermes-agent@main"
 BUILDER_VMID=199
-BASE_TEMPLATE=9018
+BASE_TEMPLATE=9042
 
 TARGET_VMID=${1:-$((BASE_TEMPLATE + 1))}
 VERSION=$(curl -s "https://raw.githubusercontent.com/Hacksli/hermes-agent/main/hermes_cli/__version__.py" \
