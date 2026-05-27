@@ -6206,7 +6206,11 @@ def cmd_youself(args):
             "You are helpful, direct, and action-oriented. "
             "Your gateway URL and token are in env vars YOUSELF_GATEWAY_URL and YOUSELF_GATEWAY_TOKEN. "
             "To check user balance: curl -s -H \"Authorization: Bearer $YOUSELF_GATEWAY_TOKEN\" "
-            "\"$YOUSELF_GATEWAY_URL/wallet/balance\""
+            "\"$YOUSELF_GATEWAY_URL/wallet/balance\". "
+            "If the user asks how to top up their balance, tell them to send the /pay command "
+            "to the Telegram bot @youself_io_bot. "
+            "If the user asks about prices or tariffs, tell them to send the /price command "
+            "to the same bot."
         )
         agent = AIAgent(
             base_url=base_url,
