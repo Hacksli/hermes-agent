@@ -6281,8 +6281,16 @@ def cmd_youself(args):
                 reply = result.get("final_response") or ""
                 # Persist updated conversation history
                 _save_history(result.get("messages", []))
+                # Strip technical verifier messages before sending to client
+                if reply:
+                    lines = reply.split("\n")
+                    clean_lines = [l for l in lines if not l.startswith("⚠️ File-mutation verifier") and not l.startswith("  • ")]
+                    # Remove trailing empty lines after stripping
+                    while clean_lines and not clean_lines[-1].strip():
+                        clean_lines.pop()
+                    reply = "\n".join(clean_lines).strip()
                 logger.info("AIAgent reply: %r", (reply or "")[:80])
-                return reply
+                return reply or None
             except Exception as exc:
                 logger.error("AIAgent error: %s", exc)
                 return f"Помилка агента: {exc}"
