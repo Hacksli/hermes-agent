@@ -6237,7 +6237,7 @@ def cmd_youself(args):
     def _get_msg_count() -> int:
         try:
             if os.path.isfile(_MSG_COUNT_FILE):
-                return int(open(_MSG_COUNT_FILE).read().strip())
+                return int(open(_MSG_COUNT_FILE, encoding="utf-8").read().strip())
         except Exception:
             pass
         return 0
@@ -6246,7 +6246,7 @@ def cmd_youself(args):
         count = _get_msg_count() + 1
         try:
             os.makedirs(os.path.dirname(_MSG_COUNT_FILE), exist_ok=True)
-            with open(_MSG_COUNT_FILE, "w") as f:
+            with open(_MSG_COUNT_FILE, "w", encoding="utf-8") as f:
                 f.write(str(count))
         except Exception:
             pass
