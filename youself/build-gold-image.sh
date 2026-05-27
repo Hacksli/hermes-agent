@@ -10,6 +10,27 @@ HERMES_REPO="https://github.com/Hacksli/hermes-agent@main"
 BUILDER_VMID=199
 ADMIN_URL="https://api.youself.io"
 
+# Backend repo on raw GitHub — we fetch the canonical setup-hermes.sh
+# and scrub-vm.sh from here on every build so a push to that repo is
+# enough to land in the next gold image (no manual scp to /var/lib/vz
+# /snippets needed). Both files are intentionally kept in the backend
+# repo because they encode platform conventions (wrappers, SOUL.md,
+# token redaction) that belong with the server contract.
+BACKEND_RAW="https://raw.githubusercontent.com/Hacksli/deployment-youself-io-go-backend/main/scripts"
+
+# fetch_script <name> <output-path>
+# Tries raw GitHub first; falls back to /var/lib/vz/snippets/<name> so a
+# transient GitHub outage doesn't block a release-critical rebuild.
+fetch_script() {
+  local name="$1" out="$2"
+  if wget -q "${BACKEND_RAW}/${name}" -O "$out" && [ -s "$out" ]; then
+    log "  fetched ${name} from backend repo ($(wc -c < "$out") bytes)"
+    return 0
+  fi
+  log "  WARNING: ${name} fetch from GitHub failed, falling back to /var/lib/vz/snippets/${name}"
+  cp "/var/lib/vz/snippets/${name}" "$out"
+}
+
 # BASE_TEMPLATE — single source of truth is the DB
 BASE_TEMPLATE=$(curl -s -H "Authorization: Bearer ${YOUSELF_ADMIN_TOKEN}" \
   "${ADMIN_URL}/admin/settings" | python3 -c \
@@ -72,19 +93,25 @@ guest_long "pip3 install --no-cache-dir --break-system-packages --quiet --force-
 log "Step 3b: Patching hermes_cli/main.py with youself identity"
 guest_long "wget -q 'https://raw.githubusercontent.com/Hacksli/hermes-agent/main/hermes_cli/main.py' -O /usr/lib/python3.12/site-packages/hermes_cli/main.py && echo patch_ok" 60
 
-# 4. Apply setup-hermes.sh
+# 4. Apply setup-hermes.sh (fetched fresh from backend repo each build)
 log "Step 4: Applying hermes setup"
-SETUP_B64=$(base64 -w0 /var/lib/vz/snippets/setup-hermes.sh)
-guest_long "echo '${SETUP_B64}' | base64 -d > /tmp/s.sh && sh /tmp/s.sh" 30
+SETUP_PATH=$(mktemp)
+fetch_script setup-hermes.sh "$SETUP_PATH"
+SETUP_B64=$(base64 -w0 "$SETUP_PATH")
+rm -f "$SETUP_PATH"
+guest_long "echo '${SETUP_B64}' | base64 -d > /tmp/s.sh && sh /tmp/s.sh" 60
 
 # 5. Verify AIAgent identity via guest_long
 log "Step 5: Verifying hermes AIAgent identity"
 guest_long "grep -l 'youself_identity' /usr/lib/python*/site-packages/hermes_cli/main.py 2>/dev/null && echo AIAgent_OK || echo AIAgent_MISSING" 30
 log "  (verification complete)"
 
-# 6. Scrub
+# 6. Scrub (fetched fresh from backend repo each build)
 log "Step 6: Scrubbing VM"
-SCRUB_B64=$(base64 -w0 /var/lib/vz/snippets/scrub-vm.sh)
+SCRUB_PATH=$(mktemp)
+fetch_script scrub-vm.sh "$SCRUB_PATH"
+SCRUB_B64=$(base64 -w0 "$SCRUB_PATH")
+rm -f "$SCRUB_PATH"
 guest_long "echo '${SCRUB_B64}' | base64 -d > /tmp/sc.sh && sh /tmp/sc.sh" 30
 
 # 7. Shutdown
