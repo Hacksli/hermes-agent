@@ -2,13 +2,19 @@
 # ============================================================
 # build-gold-image.sh — Build youself.io gold image on Proxmox
 # Run directly ON Proxmox host: bash /opt/build-gold-image.sh [TARGET_VMID]
-# BASE_TEMPLATE is updated automatically after each successful build.
+# BASE_TEMPLATE is read from DB (system_settings) on each run - single source of truth.
 # ============================================================
 set -euo pipefail
 
 HERMES_REPO="https://github.com/Hacksli/hermes-agent@main"
 BUILDER_VMID=199
-BASE_TEMPLATE=9042
+ADMIN_URL="https://api.youself.io"
+
+# BASE_TEMPLATE — single source of truth is the DB
+BASE_TEMPLATE=$(curl -s -H "Authorization: Bearer ${YOUSELF_ADMIN_TOKEN}" \
+  "${ADMIN_URL}/admin/settings" | python3 -c \
+  "import sys,json; s=json.load(sys.stdin); print(next((x['value'] for x in s if x['key']=='proxmox_template_vmid'), '9042'))" \
+  2>/dev/null || echo '9042')
 
 TARGET_VMID=${1:-$((BASE_TEMPLATE + 1))}
 VERSION=$(curl -s "https://raw.githubusercontent.com/Hacksli/hermes-agent/main/hermes_cli/__version__.py" \
@@ -86,11 +92,7 @@ log "Step 7: Shutting down builder"
 qm shutdown ${BUILDER_VMID} --timeout 30
 sleep 10
 
-# 8. Update BASE_TEMPLATE immediately so next run uses correct base
-log "Step 8a: Updating BASE_TEMPLATE to ${TARGET_VMID}"
-sed -i "s/^BASE_TEMPLATE=.*/BASE_TEMPLATE=${TARGET_VMID}/" /opt/build-gold-image.sh
-
-# 8b. Create template
+# 8. Create template
 log "Step 8: Creating template VMID ${TARGET_VMID}"
 qm destroy ${TARGET_VMID} --purge 2>/dev/null || true
 sleep 2
@@ -99,11 +101,10 @@ qm template ${TARGET_VMID}
 qm set ${TARGET_VMID} --description "hermes ${VERSION}; AIAgent mode; built $(date +%Y-%m-%d)"
 qm destroy ${BUILDER_VMID} --purge
 
-log "Step 9: BASE_TEMPLATE already updated to ${TARGET_VMID}"
+log "Step 9: BASE_TEMPLATE is read from DB on each run - no local update needed"
 
 # 10. Update system_settings via Admin API
 log "Step 10: Updating proxmox_template_vmid in DB"
-ADMIN_TOKEN="${YOUSELF_ADMIN_TOKEN:-}"  # set via env or CI secret
 RESP=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH \
   -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   -H "Content-Type: application/json" \
