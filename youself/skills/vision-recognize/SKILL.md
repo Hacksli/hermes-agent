@@ -67,7 +67,7 @@ youself-vision "<signed file_url from the /updates payload>" "<your focused prom
 
 Returns the same JSON as the underlying endpoint — see Response below.
 
-If for some reason the wrapper is missing (very old VM), the underlying endpoint is `POST $YOUSELF_GATEWAY_URL/youself-gateway/v1/vision/recognize` with body `{prompt, file_url, max_tokens?}` and Bearer auth — but on a current VM you should never hit that path. `file_url` is exactly the signed URL the gateway pushes to you in `/updates`; pass it through — the backend extracts the file ULID, fetches the bytes from Telegram, and base64-encodes for Claude.
+If for some reason the wrapper is missing (very old VM), the underlying endpoint is `POST $YOUSELF_GATEWAY_URL/vision/recognize` (the `YOUSELF_GATEWAY_URL` env already ends with `/youself-gateway/v1`, so don't repeat that prefix) with body `{prompt, file_url, max_tokens?}` and Bearer auth — but on a current VM you should never hit that path. `file_url` is exactly the signed URL the gateway pushes to you in `/updates`; pass it through — the backend extracts the file ULID, fetches the bytes from Telegram, and base64-encodes for Claude.
 
 ### Response
 
@@ -87,7 +87,7 @@ If for some reason the wrapper is missing (very old VM), the underlying endpoint
 
 Billed per token at sell prices listed in `/price`. Input tokens include the image (Anthropic counts ≈1k–2k tokens per typical user photo) plus your text prompt. Output tokens are the answer.
 
-Check the user's balance with `GET /youself-gateway/v1/wallet/balance` before a large call if you're unsure they can afford it. The endpoint returns `402 Payment Required` with `{"error": {"code": "insufficient_quota"}}` when balance is too low — relay that to the user and stop.
+Check the user's balance with the `youself-balance` wrapper before a large call if you're unsure they can afford it (never curl the gateway directly — the token is redacted from your shell). The vision call returns `402` with `{"error": {"code": "insufficient_quota"}}` when balance is too low — relay that to the user and stop.
 
 ## Example: full cycle
 
