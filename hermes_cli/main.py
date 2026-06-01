@@ -6216,7 +6216,7 @@ def cmd_youself(args):
             base_url=base_url,
             api_key=api_key,
             model=default_model,
-            max_iterations=10,      # reduced to avoid 429 from DeepSeek
+            max_iterations=30,      # 429 handled by proxy semaphore now
             ephemeral_system_prompt=youself_identity,
         )
         logger.info("Hermes AIAgent ready: base_url=%s model=%s", base_url, default_model)
