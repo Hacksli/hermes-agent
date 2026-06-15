@@ -1104,6 +1104,104 @@ class APIServerAdapter(BasePlatformAdapter):
             },
         })
 
+    async def _handle_sessions_list(self, request: "web.Request") -> "web.Response":
+        """GET /v1/sessions — list stored sessions across all platforms.
+
+        Surfaces every session recorded in state.db (Telegram, Slack, the API
+        server itself, …) so external UIs can show real, cross-platform chats.
+        Optional query params: ``source`` (filter by platform), ``limit``,
+        ``offset``.
+        """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        db = self._ensure_session_db()
+        if db is None:
+            return web.json_response(
+                _openai_error("Session storage unavailable", err_type="server_error"),
+                status=503,
+            )
+
+        def _int(name: str, default: int) -> int:
+            try:
+                return max(0, int(request.query.get(name, default)))
+            except (TypeError, ValueError):
+                return default
+
+        limit = min(_int("limit", 100), 500)
+        offset = _int("offset", 0)
+        source = request.query.get("source") or None
+
+        try:
+            sessions = db.list_sessions_rich(
+                source=source,
+                limit=limit,
+                offset=offset,
+                include_children=False,
+                order_by_last_active=True,
+            )
+        except Exception as e:
+            logger.error("Failed to list sessions: %s", e, exc_info=True)
+            return web.json_response(
+                _openai_error(f"Failed to list sessions: {e}", err_type="server_error"),
+                status=500,
+            )
+
+        return web.json_response({"object": "list", "data": sessions})
+
+    async def _handle_session_messages(self, request: "web.Request") -> "web.Response":
+        """GET /v1/sessions/{session_id}/messages — fetch a session transcript.
+
+        Returns the messages in OpenAI (role/content) shape. Continue a session
+        by POSTing to /v1/chat/completions with the ``X-Hermes-Session-Id``
+        header set to this session id and only the new user turn in ``messages``.
+        """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        session_id = (request.match_info.get("session_id") or "").strip()
+        if not session_id or re.search(r"[\r\n\x00]", session_id):
+            return web.json_response(
+                {"error": {"message": "Invalid session id", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        db = self._ensure_session_db()
+        if db is None:
+            return web.json_response(
+                _openai_error("Session storage unavailable", err_type="server_error"),
+                status=503,
+            )
+
+        try:
+            session = db.get_session(session_id)
+        except Exception as e:
+            logger.warning("Failed to load session %s: %s", session_id, e)
+            session = None
+        if not session:
+            return web.json_response(
+                {"error": {"message": "Session not found", "type": "invalid_request_error"}},
+                status=404,
+            )
+
+        try:
+            messages = db.get_messages_as_conversation(session_id)
+        except Exception as e:
+            logger.error("Failed to load messages for %s: %s", session_id, e, exc_info=True)
+            return web.json_response(
+                _openai_error(f"Failed to load messages: {e}", err_type="server_error"),
+                status=500,
+            )
+
+        return web.json_response({
+            "object": "session.messages",
+            "session_id": session_id,
+            "session": session,
+            "messages": messages,
+        })
+
     async def _handle_chat_completions(self, request: "web.Request") -> "web.Response":
         """POST /v1/chat/completions — OpenAI Chat Completions format."""
         auth_err = self._check_auth(request)
@@ -3496,6 +3594,9 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_post("/v1/responses", self._handle_responses)
             self._app.router.add_get("/v1/responses/{response_id}", self._handle_get_response)
             self._app.router.add_delete("/v1/responses/{response_id}", self._handle_delete_response)
+
+            self._app.router.add_get("/v1/sessions", self._handle_sessions_list)
+            self._app.router.add_get("/v1/sessions/{session_id}/messages", self._handle_session_messages)
             # Cron jobs management API
             self._app.router.add_get("/api/jobs", self._handle_list_jobs)
             self._app.router.add_post("/api/jobs", self._handle_create_job)
