@@ -1207,6 +1207,21 @@ class APIServerAdapter(BasePlatformAdapter):
                 status=500,
             )
 
+        # Re-attach files the agent delivered on earlier turns. They were
+        # streamed once (as hermes.file.attached) and not persisted, so on
+        # reload re-read them from the MEDIA: paths still in the stored text
+        # (best-effort: works while the produced files remain on disk).
+        try:
+            for m in messages:
+                if (isinstance(m, dict)
+                        and m.get("role") == "assistant"
+                        and isinstance(m.get("content"), str)):
+                    atts = self._collect_file_payloads(m["content"], trust_existing=True)
+                    if atts:
+                        m["attachments"] = atts
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[api_server] transcript attachment rehydrate failed: %s", e)
+
         return web.json_response({
             "object": "session.messages",
             "session_id": session_id,
@@ -3826,17 +3841,40 @@ class APIServerAdapter(BasePlatformAdapter):
             logger.warning("[api_server] file sink raised: %s", e)
             return False
 
-    def _deliver_files_via_sink(self, response_text: str) -> None:
-        """Extract files referenced by the agent's response and push them to
-        the request sink, classified so the client can render them inline.
+    @staticmethod
+    def _is_safe_rehydrate_path(path: str) -> bool:
+        """Allow serving an existing agent-produced file unless it lives under a
+        credential/system location (reuses the gateway's canonical denylist:
+        /etc, /root, ~/.ssh, ~/.hermes/auth.json, …).
 
-        Mirrors GatewayRunner._deliver_media_from_response's partitioning but,
-        instead of uploading to a messaging platform, surfaces files in the
-        HTTP/SSE response — so files route to whichever platform the user
-        actually spoke on (the api_server one), not Telegram.
+        Used for both live delivery and transcript reload on the api_server
+        channel: it serves the VM owner (a single authenticated user), so the
+        strict allowlist + recency window — meant for untrusted multi-platform
+        input — would needlessly reject the user's own /tmp files once they age
+        past ~10 minutes (e.g. when the agent re-sends a file made earlier)."""
+        try:
+            p = Path(path).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return False
+        if not p.is_file():
+            return False
+        try:
+            from gateway.platforms.base import _path_under_denied_prefix
+            return not _path_under_denied_prefix(p)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _collect_file_payloads(self, response_text: str, trust_existing: bool = False):
+        """Extract files referenced by a response and build attachment payloads.
+
+        Mirrors GatewayRunner._deliver_media_from_response's partitioning.
+        ``trust_existing`` switches from the strict delivery-time validator
+        (allowlist + recency) to a denylist-only check, so already-stored
+        assistant files can be re-served when a transcript is reloaded.
         """
-        if not response_text or _API_FILE_SINK.get() is None:
-            return
+        payloads: List[Dict[str, Any]] = []
+        if not response_text:
+            return payloads
         try:
             from gateway.platforms.base import (
                 BasePlatformAdapter,
@@ -3848,10 +3886,14 @@ class APIServerAdapter(BasePlatformAdapter):
             _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 
             media_files, _ = self.extract_media(response_text)
-            media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
             _, cleaned = self.extract_images(response_text)
             local_files, _ = self.extract_local_files(cleaned)
-            local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
+            if trust_existing:
+                media_files = [(p, v) for (p, v) in media_files if self._is_safe_rehydrate_path(p)]
+                local_files = [p for p in local_files if self._is_safe_rehydrate_path(p)]
+            else:
+                media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+                local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
 
             seen: set = set()
 
@@ -3865,19 +3907,39 @@ class APIServerAdapter(BasePlatformAdapter):
                     return "image"
                 return "file"
 
-            def _push(path: str, kind: str) -> None:
+            def _add(path: str, kind: str) -> None:
                 rp = str(path)
                 if rp in seen:
                     return
                 seen.add(rp)
-                self._emit_file_to_sink(rp, kind)
+                payload = self._build_file_payload(rp, kind)
+                if payload is not None:
+                    payloads.append(payload)
 
             for media_path, is_voice in media_files:
-                _push(media_path, _classify(media_path, is_voice))
+                _add(media_path, _classify(media_path, is_voice))
             for file_path in local_files:
-                _push(file_path, _classify(file_path))
+                _add(file_path, _classify(file_path))
         except Exception as e:  # noqa: BLE001
-            logger.warning("[api_server] file sink delivery failed: %s", e)
+            logger.warning("[api_server] file payload collection failed: %s", e)
+        return payloads
+
+    def _deliver_files_via_sink(self, response_text: str) -> None:
+        """Surface files referenced by the agent's response on the active
+        request sink, so they route to the platform the user actually spoke on
+        (the api_server one), not Telegram.
+
+        Uses the denylist-only check (``trust_existing=True``) so the owner's own
+        files deliver even when re-sent across turns — the strict recency window
+        would otherwise drop files produced earlier in the conversation."""
+        sink = _API_FILE_SINK.get()
+        if sink is None or not response_text:
+            return
+        for payload in self._collect_file_payloads(response_text, trust_existing=True):
+            try:
+                sink(payload)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[api_server] file sink raised: %s", e)
 
     async def send(
         self,

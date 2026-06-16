@@ -164,3 +164,39 @@ class TestDeliverFilesViaSink:
         ad = _adapter()
         # Must not raise when no request/sink is active.
         ad._deliver_files_via_sink("MEDIA:/tmp/whatever.pdf")
+
+
+class TestRehydrate:
+    """Transcript reload: re-serve already-stored files via the denylist path."""
+
+    def test_collect_trust_existing_reads_old_file(self, tmp_path, monkeypatch):
+        ad = _adapter()
+        pdf = tmp_path / "report.pdf"
+        pdf.write_bytes(b"%PDF-1.4 doc")
+        png = tmp_path / "chart.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 20)
+        # Make the files "old" so the strict recency validator would reject them.
+        old = 1_000_000_000
+        for f in (pdf, png):
+            os.utime(f, (old, old))
+        monkeypatch.setattr(
+            ad, "extract_media",
+            lambda text: ([(str(pdf), False)], text),
+        )
+        monkeypatch.setattr(ad, "extract_images", lambda text: ([], text))
+        monkeypatch.setattr(ad, "extract_local_files", lambda text: ([str(png)], text))
+
+        # Strict mode rejects (not under an allowed root, too old) → empty.
+        assert ad._collect_file_payloads("text", trust_existing=False) == []
+        # Trust mode re-serves the existing files.
+        out = ad._collect_file_payloads("text", trust_existing=True)
+        kinds = sorted(p["kind"] for p in out)
+        assert kinds == ["file", "image"]
+
+    def test_is_safe_rehydrate_path_blocks_credentials(self, tmp_path):
+        ad = _adapter()
+        f = tmp_path / "ok.pdf"
+        f.write_bytes(b"%PDF data")
+        assert ad._is_safe_rehydrate_path(str(f)) is True
+        assert ad._is_safe_rehydrate_path("/etc/passwd") is False
+        assert ad._is_safe_rehydrate_path(str(tmp_path / "missing.pdf")) is False
