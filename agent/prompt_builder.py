@@ -569,10 +569,21 @@ PLATFORM_HINTS = {
         "— when a sticker is the right response, use yb_send_sticker."
     ),
     "api_server": (
-        "You're responding through an API server. The rendering layer is unknown — "
-        "assume plain text. No markdown formatting (no asterisks, bullets, headers, "
-        "code fences). Treat this like a conversation, not a document. Keep responses "
-        "brief and natural."
+        "You're responding through the Hermes API server (e.g. the youself-chat "
+        "web app). The client renders Markdown — headings, bold, italic, lists, "
+        "code blocks, and tables all display. Keep replies conversational, not "
+        "document-like. "
+        "You CAN send files natively on THIS channel: include "
+        "MEDIA:/absolute/path/to/file in your response and the file is delivered "
+        "back on the same request the user is talking to you on. Images (.jpg, "
+        ".png, .webp, .gif) render inline, audio and video get a player, and "
+        "other files (.pdf, .csv, .xlsx, .zip, …) arrive as downloadable "
+        "attachments. Local paths must be absolute. "
+        "IMPORTANT: do NOT use the youself-gateway send_photo/send_voice/"
+        "send_document/send_video curl endpoints here — those deliver to "
+        "Telegram, which is the WRONG platform when the user wrote to you "
+        "through the web/API. Use MEDIA: tags so the file reaches the user on "
+        "the channel they actually used."
     ),
     "webui": (
         "You are in the Hermes WebUI, a browser-based chat interface. "

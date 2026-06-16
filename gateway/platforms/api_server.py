@@ -62,6 +62,18 @@ MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversation
 CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
 MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
 MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
+# Cap for files surfaced back to the HTTP/SSE client. base64 attachments are
+# held in memory and inlined into the response, so keep them modest.
+MAX_OUTBOUND_FILE_BYTES = 25 * 1024 * 1024  # 25 MB
+
+# Per-request file sink — set inside ``_run_agent``'s executor thread so that
+# the file-delivery path can push generated files (PDFs, images, voice, …)
+# back through the *same* HTTP request the user spoke on, instead of the agent
+# blindly POSTing them to the Telegram gateway.  contextvars are task/thread
+# local, so concurrent requests never share a sink.  Value is a callable
+# ``sink(payload: dict) -> None`` or ``None`` when no request is active.
+from contextvars import ContextVar as _ContextVar
+_API_FILE_SINK: _ContextVar = _ContextVar("hermes_api_file_sink", default=None)
 
 
 def _coerce_port(value: Any, default: int = DEFAULT_PORT) -> int:
@@ -1391,6 +1403,11 @@ class APIServerAdapter(BasePlatformAdapter):
             # side-by-side with ``tool_start_callback``/``tool_complete_callback``.
             # The structured callbacks are strictly richer (they carry the
             # tool_call id), so they own the chat-completions SSE channel.
+            def _on_file(payload):
+                """Surface a generated file as a tagged queue item so the SSE
+                writer can emit it as a ``hermes.file.attached`` event."""
+                _stream_q.put(("__file__", payload))
+
             agent_ref = [None]
             agent_task = asyncio.ensure_future(self._run_agent(
                 user_message=user_message,
@@ -1402,6 +1419,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 tool_complete_callback=_on_tool_complete,
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
+                file_callback=_on_file,
             ))
             # Ensure SSE drain loops can terminate without relying on polling
             # agent_task.done(), which can race with queue timeout checks.
@@ -1415,13 +1433,18 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Non-streaming: run the agent (with optional Idempotency-Key)
         async def _compute_completion():
-            return await self._run_agent(
+            collected_files: List[Dict[str, Any]] = []
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
+                file_callback=collected_files.append,
             )
+            if collected_files and isinstance(result, dict):
+                result["attachments"] = collected_files
+            return result, usage
 
         idempotency_key = request.headers.get("Idempotency-Key")
         if idempotency_key:
@@ -1508,6 +1531,11 @@ class APIServerAdapter(BasePlatformAdapter):
                 "total_tokens": usage.get("total_tokens", 0),
             },
         }
+        # Files the agent generated, delivered back on this request (not Telegram).
+        _attachments = result.get("attachments") if isinstance(result, dict) else None
+        if _attachments:
+            response_data["attachments"] = _attachments
+            response_data["choices"][0]["message"]["attachments"] = _attachments
         if is_partial or is_failed or not completed:
             response_data["hermes"] = {
                 "completed": completed,
@@ -1581,6 +1609,14 @@ class APIServerAdapter(BasePlatformAdapter):
                     event_data = json.dumps(item[1])
                     await response.write(
                         f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode()
+                    )
+                elif isinstance(item, tuple) and len(item) == 2 and item[0] == "__file__":
+                    # A generated file (PDF, image, voice, …) delivered back on
+                    # this request instead of the Telegram gateway.  Frontends
+                    # render it as an assistant attachment.
+                    event_data = json.dumps(item[1])
+                    await response.write(
+                        f"event: hermes.file.attached\ndata: {event_data}\n\n".encode()
                     )
                 else:
                     content_chunk = {
@@ -2931,6 +2967,7 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_complete_callback=None,
         agent_ref: Optional[list] = None,
         gateway_session_key: Optional[str] = None,
+        file_callback=None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -2942,10 +2979,18 @@ class APIServerAdapter(BasePlatformAdapter):
         at ``agent_ref[0]`` before ``run_conversation`` begins.  This allows
         callers (e.g. the SSE writer) to call ``agent.interrupt()`` from
         another thread to stop in-progress LLM calls.
+
+        ``file_callback`` — optional ``sink(payload: dict) -> None`` that
+        receives each generated file (PDF, image, voice, …) the agent
+        produced, so files route back through *this* HTTP request rather
+        than the Telegram gateway.  Bound to ``_API_FILE_SINK`` for the
+        duration of the run so the file-delivery path can reach it.
         """
         loop = asyncio.get_running_loop()
 
         def _run():
+            from gateway.session_context import clear_session_vars, set_session_vars
+
             agent = self._create_agent(
                 ephemeral_system_prompt=ephemeral_system_prompt,
                 session_id=session_id,
@@ -2958,11 +3003,39 @@ class APIServerAdapter(BasePlatformAdapter):
             if agent_ref is not None:
                 agent_ref[0] = agent
             effective_task_id = session_id or str(uuid.uuid4())
-            result = agent.run_conversation(
-                user_message=user_message,
-                conversation_history=conversation_history,
-                task_id=effective_task_id,
+
+            # Bind the source platform so platform-aware tools/skills know the
+            # message came in over the API server (web), and the file sink so
+            # generated files come back on this request — not Telegram.
+            session_tokens = set_session_vars(
+                platform="api_server",
+                chat_id=session_id or "",
+                session_key=gateway_session_key or "",
             )
+            sink_token = _API_FILE_SINK.set(file_callback) if file_callback is not None else None
+            try:
+                result = agent.run_conversation(
+                    user_message=user_message,
+                    conversation_history=conversation_history,
+                    task_id=effective_task_id,
+                )
+                # Surface any files the agent referenced back through the sink
+                # (classified for inline rendering) before the request closes.
+                if file_callback is not None:
+                    try:
+                        self._deliver_files_via_sink((result or {}).get("final_response") or "")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("[api_server] post-run file delivery failed: %s", e)
+            finally:
+                if sink_token is not None:
+                    try:
+                        _API_FILE_SINK.reset(sink_token)
+                    except Exception:
+                        pass
+                try:
+                    clear_session_vars(session_tokens)
+                except Exception:
+                    pass
             usage = {
                 "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
                 "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
@@ -3693,6 +3766,119 @@ class APIServerAdapter(BasePlatformAdapter):
         self._app = None
         logger.info("[%s] API server stopped", self.name)
 
+    # ------------------------------------------------------------------
+    # File delivery — surface generated files back through the HTTP/SSE
+    # response so the originating client (e.g. youself-chat-web) receives
+    # them, instead of the agent always POSTing to the Telegram gateway.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_file_payload(file_path: str, kind: str, caption: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Read a local file and build a JSON-safe attachment payload.
+
+        Returns ``None`` (and logs) when the file is missing, empty, or
+        larger than ``MAX_OUTBOUND_FILE_BYTES`` — the caller then simply
+        leaves the file path in the text response as a fallback.
+        """
+        import base64 as _b64
+        import mimetypes as _mt
+
+        try:
+            p = Path(file_path)
+            if not p.is_file():
+                return None
+            size = p.stat().st_size
+            if size <= 0:
+                return None
+            if size > MAX_OUTBOUND_FILE_BYTES:
+                logger.warning(
+                    "[api_server] file %s (%d bytes) exceeds outbound cap %d — not inlined",
+                    p.name, size, MAX_OUTBOUND_FILE_BYTES,
+                )
+                return None
+            data = p.read_bytes()
+            mime = _mt.guess_type(p.name)[0] or "application/octet-stream"
+            return {
+                "name": p.name,
+                "mime": mime,
+                "kind": kind,
+                "size": len(data),
+                "caption": caption or "",
+                # data: URL — directly usable as <img src> / download href.
+                "data": "data:%s;base64,%s" % (mime, _b64.b64encode(data).decode("ascii")),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[api_server] failed to read file %s for delivery: %s", file_path, e)
+            return None
+
+    def _emit_file_to_sink(self, file_path: str, kind: str, caption: Optional[str] = None) -> bool:
+        """Push a file to the active per-request sink. No-op if none active."""
+        sink = _API_FILE_SINK.get()
+        if sink is None:
+            return False
+        payload = self._build_file_payload(file_path, kind, caption)
+        if payload is None:
+            return False
+        try:
+            sink(payload)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[api_server] file sink raised: %s", e)
+            return False
+
+    def _deliver_files_via_sink(self, response_text: str) -> None:
+        """Extract files referenced by the agent's response and push them to
+        the request sink, classified so the client can render them inline.
+
+        Mirrors GatewayRunner._deliver_media_from_response's partitioning but,
+        instead of uploading to a messaging platform, surfaces files in the
+        HTTP/SSE response — so files route to whichever platform the user
+        actually spoke on (the api_server one), not Telegram.
+        """
+        if not response_text or _API_FILE_SINK.get() is None:
+            return
+        try:
+            from gateway.platforms.base import (
+                BasePlatformAdapter,
+                should_send_media_as_audio,
+            )
+
+            force_document = "[[as_document]]" in response_text
+            _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+            _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
+
+            media_files, _ = self.extract_media(response_text)
+            media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+            _, cleaned = self.extract_images(response_text)
+            local_files, _ = self.extract_local_files(cleaned)
+            local_files = BasePlatformAdapter.filter_local_delivery_paths(local_files)
+
+            seen: set = set()
+
+            def _classify(path: str, is_voice: bool = False) -> str:
+                ext = Path(path).suffix.lower()
+                if is_voice or should_send_media_as_audio("api_server", ext, is_voice=is_voice):
+                    return "audio"
+                if ext in _VIDEO_EXTS:
+                    return "video"
+                if ext in _IMAGE_EXTS and not force_document:
+                    return "image"
+                return "file"
+
+            def _push(path: str, kind: str) -> None:
+                rp = str(path)
+                if rp in seen:
+                    return
+                seen.add(rp)
+                self._emit_file_to_sink(rp, kind)
+
+            for media_path, is_voice in media_files:
+                _push(media_path, _classify(media_path, is_voice))
+            for file_path in local_files:
+                _push(file_path, _classify(file_path))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[api_server] file sink delivery failed: %s", e)
+
     async def send(
         self,
         chat_id: str,
@@ -3704,6 +3890,43 @@ class APIServerAdapter(BasePlatformAdapter):
         Not used — HTTP request/response cycle handles delivery directly.
         """
         return SendResult(success=False, error="API server uses HTTP request/response, not send()")
+
+    # File-send overrides: route native attachments into the active request
+    # sink so adapter-driven delivery (e.g. _deliver_media_from_response) also
+    # surfaces files over HTTP.  Fall back to the text-only base behaviour when
+    # no request is active (CLI/cron contexts).
+
+    async def send_document(self, chat_id: str, file_path: str, caption: Optional[str] = None,
+                            file_name: Optional[str] = None, reply_to: Optional[str] = None,
+                            metadata: Optional[Dict[str, Any]] = None, **kwargs) -> SendResult:
+        if self._emit_file_to_sink(file_path, "file", caption):
+            return SendResult(success=True)
+        return await super().send_document(chat_id=chat_id, file_path=file_path, caption=caption,
+                                           file_name=file_name, reply_to=reply_to, metadata=metadata, **kwargs)
+
+    async def send_image_file(self, chat_id: str, image_path: str, caption: Optional[str] = None,
+                              reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
+                              **kwargs) -> SendResult:
+        if self._emit_file_to_sink(image_path, "image", caption):
+            return SendResult(success=True)
+        return await super().send_image_file(chat_id=chat_id, image_path=image_path, caption=caption,
+                                             reply_to=reply_to, metadata=metadata, **kwargs)
+
+    async def send_voice(self, chat_id: str, audio_path: str, caption: Optional[str] = None,
+                         reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
+                         **kwargs) -> SendResult:
+        if self._emit_file_to_sink(audio_path, "audio", caption):
+            return SendResult(success=True)
+        return await super().send_voice(chat_id=chat_id, audio_path=audio_path, caption=caption,
+                                        reply_to=reply_to, metadata=metadata, **kwargs)
+
+    async def send_video(self, chat_id: str, video_path: str, caption: Optional[str] = None,
+                         reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None,
+                         **kwargs) -> SendResult:
+        if self._emit_file_to_sink(video_path, "video", caption):
+            return SendResult(success=True)
+        return await super().send_video(chat_id=chat_id, video_path=video_path, caption=caption,
+                                        reply_to=reply_to, metadata=metadata, **kwargs)
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         """Return basic info about the API server."""
